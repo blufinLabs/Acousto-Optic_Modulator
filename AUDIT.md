@@ -70,3 +70,60 @@ Absolute efficiency has not been tested against a fabricated device or Chang's
 historical examples. Optical activity, effective-coefficient calibration, acoustic
 field overlap and multi-order coupling remain material limits. Historical approximate
 cut formulas are not silently substituted for the exact numerical construction.
+
+## Engineering-package extension
+
+The original material data and bulk coupling equations are retained. Package
+mode adds a separate engineering-settings layer, fixed-RF azimuth-family search,
+closed-solid geometry and reporting, not a validated transducer or coating model.
+Azimuth varies the common coplanar optical/acoustic family, not three independent
+wavevectors. Candidate filtering precedes report deduplication; refined cuts and
+alternatives are rechecked for nominal RF, original optical constraints and
+physical package feasibility. The selected azimuth is carried into response
+sweeps, while old reports without candidate-level azimuth use input azimuth.
+Cut-scan curves are grouped by azimuth instead of conflating different planes.
+
+### Boundary direction calculation
+
+At a translationally invariant planar dielectric boundary, phase continuity
+conserves tangential wavevector. For an internal dimensionless vector
+`b = k λ/(2π)` and outward exit normal `n`, define
+`bt = b - (b·n)n`. In air (index approximated as 1), a propagating output requires
+`|bt|² < 1`; the outgoing vector is
+`b_air = bt + sqrt(1-|bt|²)n`. The internal extraordinary dispersion surface and
+its gradient supply the internal wavevector and energy ray separately. This
+construction does not assume the internal extraordinary energy ray satisfies
+scalar Snell's law. TIR/evanescent cases and grazing output are non-transmitting.
+It is a kinematic boundary calculation; Fresnel amplitudes, coating behavior,
+air-index corrections and optical activity remain outside the model.
+
+### Specification provenance and release audit
+
+Official Crys-Teh, Newport and Edmund reference retrieval failed DNS resolution
+during this task. Consequently no new verified supplier numerical specifications
+are claimed. Fallback tolerance numbers are proposed engineering choices with
+rationale, **not sourced vendor capabilities or universal standard tolerances**.
+Primary-source verification and material-specific supplier acceptance are
+explicit release blockers. Standards notation does not establish attainable
+TeO₂ cut, polish or coating quality. Coating validity must be established at
+the user wavelength, both face incidence angles and selected polarization.
+
+Requested LiNbO₃/vacuum cold-weld technology does not substantiate a cut,
+thickness, metallurgy, process, impedance or conversion efficiency. Legacy
+conversion/overlap/transmission remain conditional model inputs. Average power
+is not a thermal calculation. Generated concept drawings are NOT FOR FABRICATION;
+no generation, convergence or boolean approval can qualify the hardware.
+
+Passive VSWR is Vmax/Vmin ≥1. Reversing 1000:1 to 1:1000 is invalid, not improved
+matching. User intent was unresolved; ≤1.5:1 was only a provisional proposed target.
+Nominal 50 Ω is not evidence of measured VSWR. Linewidth, switching targets,
+extinction and temperature requirements remain unspecified.
+
+The subsequent user request, “insertion loss (VSWR) >30 dB,” supersedes the
+old provisional target. VSWR, RF return loss and optical insertion loss are
+different metrics. The user then confirmed “for 1 watt inserted, less than 0.1%
+is returned”: this is **RF return loss >30 dB**, now the current confirmed
+specification. RF return loss is `-20 log10(|Gamma|)`; >30 dB implies
+`|Gamma| <10^(-30/20)` and `VSWR <(1+|Gamma|)/(1-|Gamma|) =1.0653109`.
+It does not imply optical insertion loss >30 dB or establish measured RF match.
+The 1 W example does not change the strictly sub-1-W operating power ceiling.

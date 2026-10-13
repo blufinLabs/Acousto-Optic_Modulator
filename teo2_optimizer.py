@@ -12,7 +12,7 @@ import argparse
 import csv
 import json
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -423,7 +423,7 @@ def response(report, *, wavelength_nm=None, rf_mhz=None, alignment_offset_deg=No
     q = np.asarray(optimum["acoustic_normal_xyz"])
     u = np.asarray(optimum["acoustic_displacement_xyz"])
     v = optimum["acoustic_phase_speed_m_s"]
-    phi = math.radians(s.azimuth_deg)
+    phi = math.radians(optimum.get("azimuth_deg", s.azimuth_deg))
     t = np.array([math.cos(phi), math.sin(phi), 0])
     o = np.cross([0, 0, 1], t)
     strain_b = impermeability(q, u, m)
@@ -541,7 +541,7 @@ def sampled_angles(lo, hi, step):
     return np.linspace(lo, hi, int(math.ceil((hi-lo)/step))+1)
 
 
-def optimize(settings: Settings, material: Material | None = None):
+def optimize(settings: Settings, material: Material | None = None, *, candidate_filter=None):
     """Coarse deterministic scan + constrained multistart refinement.
 
     Maximize first-lobe coupling per delivered RF watt. With tunable RF power
@@ -551,6 +551,8 @@ def optimize(settings: Settings, material: Material | None = None):
     model = Model(settings, material)
     if settings.design_mode == "wide-aperture":
         candidates, scan = optimize_wide(model)
+        if candidate_filter is not None:
+            candidates = [r for r in candidates if candidate_filter(r)]
         return build_report(settings, model, candidates, scan)
     modes = [0, 1, 2] if settings.acoustic_mode == "all" else [
         {"slow": 0, "middle": 1, "fast": 2}[settings.acoustic_mode]]
@@ -648,6 +650,8 @@ def optimize(settings: Settings, material: Material | None = None):
                             rec = model.record(*result.x, mode, pi, pd, root)
                             if rec:
                                 candidates.append(rec)
+    if candidate_filter is not None:
+        candidates = [r for r in candidates if candidate_filter(r)]
     return build_report(settings, model, candidates, scan)
 
 
@@ -723,6 +727,7 @@ def build_report(settings, model, candidates, scan):
         if all((r["acoustic_mode_index"], r["incident_polarization"], r["diffracted_polarization"]) !=
                (u["acoustic_mode_index"], u["incident_polarization"], u["diffracted_polarization"]) or
                abs(r["acoustic_tilt_from_basal_deg"]-u["acoustic_tilt_from_basal_deg"]) > 0.5 or
+               abs(r["azimuth_deg"]-u["azimuth_deg"]) > 0.5 or
                abs(r["incident_wavevector_signed_to_c_deg"]-u["incident_wavevector_signed_to_c_deg"]) > 0.5
                for u in unique):
             unique.append(r)
@@ -751,6 +756,165 @@ def build_report(settings, model, candidates, scan):
                 warnings=warnings, optimum=unique[0], alternatives=unique[1:], coarse_cut_scan=scan)
 
 
+def optimize_design(settings, engineering, material=None):
+    """Best-found cut across bounded coplanar families, with physical checks.
+
+    RF error is evaluated after optimization; it never widens nominal RF bounds.
+    Conversion and optical transmission retain their explicit model assumptions.
+    """
+    from teo2_design import crystal_geometry
+
+    engineering.validate()
+    settings.validate()
+    if settings.rf_min_mhz != settings.rf_max_mhz:
+        raise ValueError("Design package requires a fixed nominal RF frequency")
+    if engineering.fixed_azimuth and not (
+            engineering.azimuth_min_deg <= settings.azimuth_deg <= engineering.azimuth_max_deg):
+        raise ValueError("Fixed azimuth must lie within the engineering azimuth bounds")
+    if engineering.measured_vswr:
+        reflected = ((engineering.measured_vswr-1)/(engineering.measured_vswr+1))**2
+        if settings.conversion > 1-reflected+1e-12:
+            raise ValueError("Forward-RF conversion assumption exceeds net accepted power from supplied VSWR")
+    settings = replace(settings, rf_budget_w=engineering.rf_ceiling_w)
+    material = material or Material()
+    if engineering.fixed_azimuth:
+        azimuths = [settings.azimuth_deg]
+    else:
+        azimuths = list(sampled_angles(engineering.azimuth_min_deg, engineering.azimuth_max_deg,
+                                      engineering.azimuth_step_deg))
+        # Feasible aperture basins may lie between otherwise infeasible grid
+        # endpoints. Always include the interval midpoint and nominal plane.
+        azimuths.append((engineering.azimuth_min_deg+engineering.azimuth_max_deg)/2)
+        if engineering.azimuth_min_deg <= settings.azimuth_deg <= engineering.azimuth_max_deg:
+            azimuths.append(settings.azimuth_deg)
+        azimuths = sorted(set(float(x) for x in azimuths))
+    candidates, scan = [], []
+
+    def candidate_report(s, rec):
+        return dict(inputs=asdict(s), material=asdict(material), optimum=rec)
+
+    def retain(s, rec):
+        if rec is None:
+            return
+        # Recheck cuts, including refinements and alternatives, not just seeds.
+        if not (s.tilt_min_deg-1e-8 <= rec["acoustic_tilt_from_basal_deg"] <= s.tilt_max_deg+1e-8
+                and s.theta_min_deg-1e-8 <= abs(rec["incident_wavevector_signed_to_c_deg"]) <= s.theta_max_deg+1e-8
+                and abs(rec["rf_mhz"]-s.rf_min_mhz) <= 1e-6):
+            return
+        if crystal_geometry(candidate_report(s, rec), engineering)["feasible"]:
+            candidates.append(rec)
+
+    for phi in azimuths:
+        s = replace(settings, azimuth_deg=float(phi))
+        try:
+            report = optimize(s, material, candidate_filter=lambda rec:
+                              abs(rec["rf_mhz"]-s.rf_min_mhz) <= 1e-6 and
+                              crystal_geometry(candidate_report(s, rec), engineering)["feasible"])
+        except ValueError as exc:
+            if "No admissible design" not in str(exc):
+                raise
+            continue
+        for row in report["coarse_cut_scan"]:
+            scan.append(dict(row, azimuth_deg=float(phi)))
+        for rec in [report["optimum"]]+report["alternatives"]:
+            retain(s, rec)
+
+    # Deterministic multistart refinement includes azimuth, with the exact RF
+    # equality and all original optical constraints; geometry is checked again.
+    seeds = sorted(candidates, key=lambda r: r["gain_per_rf_w"], reverse=True)
+    starts = []
+    for rec in seeds:
+        if all(abs(rec["azimuth_deg"]-u["azimuth_deg"]) > 1 or
+               rec["incident_polarization"] != u["incident_polarization"] or
+               rec["acoustic_mode_index"] != u["acoustic_mode_index"] or
+               rec["quadratic_root"] != u["quadratic_root"] or
+               abs(rec["acoustic_tilt_from_basal_deg"]-u["acoustic_tilt_from_basal_deg"]) > 4 or
+               abs(rec["incident_wavevector_signed_to_c_deg"]-u["incident_wavevector_signed_to_c_deg"]) > 4
+               for u in starts):
+            starts.append(rec)
+        if len(starts) == 8:
+            break
+    if not engineering.fixed_azimuth:
+        for seed in starts:
+            margin_count = len(crystal_geometry(candidate_report(settings, seed),
+                                               engineering)["feasibility_margins"])
+            mode, pi, pd, root = (seed[k] for k in
+                                 ("acoustic_mode_index", "incident_polarization",
+                                  "diffracted_polarization", "quadratic_root"))
+            side = 1 if seed["incident_wavevector_signed_to_c_deg"] > 0 else -1
+            theta_bounds = ((settings.theta_min_deg, settings.theta_max_deg) if side > 0 else
+                            (-settings.theta_max_deg, -settings.theta_min_deg))
+
+            def evaluate(x):
+                s = replace(settings, azimuth_deg=float(x[-1]))
+                model = Model(s, material)
+                if settings.design_mode == "wide-aperture":
+                    alpha, theta, pol, rt, data = model.wide_geometry(float(x[0]), mode, pi)
+                else:
+                    alpha, theta, pol, rt = float(x[0]), float(x[1]), pd, root
+                    data = model.branch(alpha, [theta], mode, pi, pol, rt)
+                return s, model, alpha, theta, pol, rt, data
+
+            def geometry_constraints(x):
+                s, model, alpha, theta, pol, rt, data = evaluate(x)
+                td = abs(float(data["theta_d"][0]))
+                return np.array([alpha-s.tilt_min_deg, s.tilt_max_deg-alpha,
+                                 abs(theta)-s.theta_min_deg, s.theta_max_deg-abs(theta),
+                                 td-s.theta_min_deg, s.theta_max_deg-td,
+                                 s.max_walkoff_deg-data["walkoff"]])
+
+            def physical_constraints(x):
+                s, model, alpha, theta, pol, rt, data = evaluate(x)
+                # A temporary broad RF record permits geometry evaluation away
+                # from the equality manifold; final records use strict bounds.
+                broad = Model(replace(s, rf_min_mhz=1e-9, rf_max_mhz=1e9), material)
+                rec = broad.record(alpha, theta, mode, pi, pol, rt)
+                if rec is None:
+                    return np.full(margin_count, -1.0)
+                try:
+                    geom = crystal_geometry(candidate_report(s, rec), engineering)
+                except ValueError:
+                    return np.full(margin_count, -1.0)
+                return np.asarray(geom["feasibility_margins"], dtype=float)
+
+            if settings.design_mode == "wide-aperture":
+                # Recover the ordinary angle used to parameterize this family.
+                ordinary = (seed["incident_wavevector_signed_to_c_deg"] if pi == "o" else
+                            seed["diffracted_wavevector_signed_to_c_deg"])
+                initial = [ordinary, seed["azimuth_deg"]]
+                bounds = [theta_bounds, (engineering.azimuth_min_deg, engineering.azimuth_max_deg)]
+            else:
+                initial = [seed["acoustic_tilt_from_basal_deg"],
+                           seed["incident_wavevector_signed_to_c_deg"], seed["azimuth_deg"]]
+                bounds = [(settings.tilt_min_deg, settings.tilt_max_deg), theta_bounds,
+                          (engineering.azimuth_min_deg, engineering.azimuth_max_deg)]
+            result = minimize(lambda x: -float(evaluate(x)[-1]["gain"][0]), initial,
+                              method="SLSQP", bounds=bounds,
+                              constraints=[
+                                  {"type": "eq", "fun": lambda x:
+                                   float(evaluate(x)[-1]["rf_mhz"][0])-settings.rf_min_mhz},
+                                  {"type": "ineq", "fun": geometry_constraints},
+                                  {"type": "ineq", "fun": physical_constraints}],
+                              options={"maxiter": 100, "ftol": 1e-9})
+            if result.success:
+                s, model, alpha, theta, pol, rt, _ = evaluate(result.x)
+                retain(s, model.record(alpha, theta, mode, pi, pol, rt))
+    if not candidates:
+        raise ValueError("No feasible package cut found within searched coplanar families, RF and crystal/aperture bounds")
+    report = build_report(settings, Model(settings, material), candidates, scan)
+    report["inputs"]["azimuth_deg"] = report["optimum"]["azimuth_deg"]
+    report["search"] = dict(
+        domain="bounded COPLANAR families; not unrestricted noncoplanar/global optimum",
+        azimuth_seeds_deg=[float(x) for x in azimuths],
+        fixed_azimuth=engineering.fixed_azimuth,
+        objective="maximize conditional reachable useful throughput; once saturated minimize first-peak RF power",
+        nominal_rf_constraint_mhz=settings.rf_min_mhz)
+    report["warnings"] = [w for w in report["warnings"] if
+                          not w.startswith("One specified interaction plane")]
+    report["warnings"].append(report["search"]["domain"])
+    return report
+
+
 def write_outputs(report, prefix):
     prefix = Path(prefix)
     prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -766,16 +930,20 @@ def write_outputs(report, prefix):
     import matplotlib.pyplot as plt
     scan = report["coarse_cut_scan"]
     fig, axs = plt.subplots(1, 2, figsize=(11, 4.4))
-    keys = sorted(set((r["mode"], r["interaction"]) for r in scan))
-    for mode, interaction in keys:
-        ss = [r for r in scan if (r["mode"], r["interaction"]) == (mode, interaction)]
+    default_azimuth = report["inputs"].get("azimuth_deg", Settings(632.8).azimuth_deg)
+    keys = sorted(set((r.get("azimuth_deg", default_azimuth),
+                       r["mode"], r["interaction"]) for r in scan))
+    for azimuth, mode, interaction in keys:
+        ss = [r for r in scan if (r.get("azimuth_deg", default_azimuth),
+                                  r["mode"], r["interaction"]) == (azimuth, mode, interaction)]
         best = {}
         for r in ss:
             if r["tilt_deg"] not in best or r["gain_per_rf_w"] > best[r["tilt_deg"]]["gain_per_rf_w"]:
                 best[r["tilt_deg"]] = r
         ss = [best[x] for x in sorted(best)]
         x = [r["tilt_deg"] for r in ss]
-        axs[0].plot(x, [r["gain_per_rf_w"] for r in ss], label=f"mode {mode}, {interaction[0]}→{interaction[1]}")
+        axs[0].plot(x, [r["gain_per_rf_w"] for r in ss],
+                    label=f"{azimuth:g}° mode {mode}, {interaction[0]}→{interaction[1]}")
         axs[1].plot(x, [r["rf_mhz"] for r in ss])
     for ax in axs:
         ax.axvline(report["optimum"]["acoustic_tilt_from_basal_deg"], color="black", ls="--", lw=1)
@@ -808,16 +976,50 @@ def main():
         else:
             p.add_argument("--"+name.replace("_", "-"), type=float, default=default)
     p.add_argument("--material-json", type=Path, help="Override room-temperature scalar material constants")
+    p.add_argument("--design-package", action="store_true",
+                   help="Generate preliminary AO-cell engineering package; requires --rf-mhz")
+    from teo2_design import DesignSettings, write_design_package
+    for name, default in asdict(DesignSettings()).items():
+        option = "--"+name.replace("_", "-")
+        if isinstance(default, bool):
+            p.add_argument(option, action="store_true", default=default)
+        elif isinstance(default, (float, int)):
+            p.add_argument(option, type=float, default=default)
     p.add_argument("--output-prefix", default="teo2_result")
     args = p.parse_args()
     raw = vars(args).copy()
     prefix, material_path, rf = (raw.pop(k) for k in ("output_prefix", "material_json", "rf_mhz"))
+    package = raw.pop("design_package")
+    engineering_raw = {k: raw.pop(k) for k in asdict(DesignSettings())}
     if rf is not None:
         raw["rf_min_mhz"] = raw["rf_max_mhz"] = rf
     try:
+        engineering = DesignSettings(**engineering_raw)
         material = Material(**json.loads(material_path.read_text())) if material_path else Material()
-        report = optimize(Settings(**raw), material)
+        if package:
+            import sys
+            supplied = {x.split("=")[0] for x in sys.argv[1:]}
+            if rf is None:
+                raise ValueError("--design-package requires user-supplied --rf-mhz")
+            if supplied & {"--rf-min-mhz", "--rf-max-mhz"}:
+                raise ValueError("Package nominal RF cannot be combined with RF-range options")
+            if "--rf-budget-w" in supplied and raw["rf_budget_w"] != engineering.rf_ceiling_w:
+                raise ValueError("In package mode use --rf-ceiling-w; conflicting --rf-budget-w")
+            raw["rf_budget_w"] = engineering.rf_ceiling_w
+            # Package defaults leave room for a bounded Gaussian footprint.
+            # Explicit user dimensions are never silently changed.
+            if "--acoustic-width-mm" not in supplied:
+                raw["acoustic_width_mm"] = 7.0
+            if "--acoustic-height-mm" not in supplied:
+                raw["acoustic_height_mm"] = 3.0
+            if "--length-mm" not in supplied:
+                raw["length_mm"] = 3.0
+            report = optimize_design(Settings(**raw), engineering, material)
+        else:
+            report = optimize(Settings(**raw), material)
         write_outputs(report, prefix)
+        if package:
+            write_design_package(report, engineering, prefix)
     except (ValueError, TypeError, OSError) as e:
         p.error(str(e))
     r = report["optimum"]
@@ -834,6 +1036,8 @@ def main():
     print(f"Estimated throughput efficiency: {100*r['throughput_efficiency']:.2f}%")
     print(f"Acoustic walkoff: {r['acoustic_walkoff_deg']:.3f} deg")
     print(f"Saved {prefix}.json, {prefix}.csv, cut graph, four performance graphs and sweep CSVs")
+    if package:
+        print(f"Engineering package: {prefix}_design.json and separate crystal/assembly outputs; NOT FOR FABRICATION")
     for warning in report["warnings"]:
         print("MODEL LIMIT: "+warning)
 

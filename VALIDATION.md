@@ -1,5 +1,57 @@
 # Validation — version 0.2.0, 12 October 2026
 
+## Engineering-package extension — 13 October 2026
+
+Validation here concerns numerical behavior and generated artifacts, **not
+manufacturing validation**. The original fourteen physics checks passed after
+installing the existing `requirements.txt` dependencies. Fifteen physics checks
+then passed with the new winning-azimuth/old-report compatibility test.
+Package-search, geometry, CLI and artifact test results are recorded below
+after execution.
+
+The first integrated 34-test run reported 1 failure and 3 errors: the initial
+5 mm package interaction fixture was not contained by the bounded acoustic
+field in the assumed 10 mm crystal. A 3 mm slab with 7 × 3 mm acoustic area
+was verified by the package-layer checks and adopted as the package-only
+default. The legacy optimizer's 5 mm default and explicit user dimensions
+remain unchanged.
+
+Representative package-generation smoke command (example, not actual user
+operating values; outputs intentionally outside the repository):
+
+```sh
+python teo2_optimizer.py --design-package --wavelength-nm 532 --rf-mhz 80 \
+  --design-mode wide-aperture --acoustic-mode slow --incident e --grid-deg 5 \
+  --azimuth-min-deg 30 --azimuth-max-deg 60 --azimuth-step-deg 15 \
+  --rf-ceiling-w 0.9 --duty-cycle-percent 100 --output-prefix /tmp/teo2_example
+python -m unittest discover -v
+```
+
+RF perturbations are ±0.1% at the selected power and **fixed** cut/alignment.
+Nominal RF remains a hard equality for the winner and alternatives. Tolerance
+response evaluations are explicitly conditional bulk predictions, not measured
+yield or a coupled worst-case tolerance analysis. Finite Gaussian-envelope
+containment is not full overlap validation; infinite tails are excluded according
+to the reported threshold.
+
+**VSWR correction:** passive VSWR is Vmax/Vmin ≥1. Reversal from 1000:1 to
+1:1000 is not better or valid; the previous suggestion was wrong. The user's
+subsequent “insertion loss (VSWR) >30 dB” request supersedes the prior
+provisional ≤1.5:1 target. The user clarified **less than 0.1% of forward RF
+power reflected**, confirming **RF return loss >30 dB**, equivalent to
+**VSWR <1.0653109:1**. The requirement is strict, not ≥30 dB. It is not optical
+insertion loss or a measured result. Nominal 50 Ω alone cannot establish
+reflected or net accepted RF power. The 1 W illustration does not relax the
+strictly sub-1-W power ceiling.
+
+No supplier capability, cold-weld process, LiNbO₃ conversion, coating,
+temperature rise, continuous-duty endurance, switching time or extinction was
+qualified. Supplier-reference access failed DNS resolution. Numerical fallback
+tolerances remain engineering proposals pending independent primary-source
+verification and Crys-Teh review. Generated packages remain **NOT FOR FABRICATION**.
+
+## Original v0.2 validation
+
 Fourteen numerical checks passed. This verifies mathematical identities and numerical behavior, not experimental device performance or reproduction of a historical Chang device.
 
 ## Executed examples

@@ -11,6 +11,147 @@ and offers a parallel-tangent wide-aperture option. The source audit distinguish
 what was read in Chang from the mathematical extensions implemented here.
 **This is an engineering prediction, not experimentally validated device performance.**
 
+## AO-cell engineering design package
+
+Use `--design-package` to produce a **preliminary, NOT FOR FABRICATION**
+intensity-modulator package, including a separate crystal specification and
+dimensioned vector drawing. Wavelength and nominal RF are runtime user inputs.
+Example values below are illustrative, not the user's operating point:
+
+```sh
+python teo2_optimizer.py --design-package --wavelength-nm 532 --rf-mhz 80 \
+  --design-mode wide-aperture --acoustic-mode slow --incident e --grid-deg 5 \
+  --azimuth-min-deg 30 --azimuth-max-deg 60 --azimuth-step-deg 15 \
+  --rf-ceiling-w 0.9 --duty-cycle-percent 100 --output-prefix /tmp/teo2_example
+```
+
+Package mode requires `--rf-mhz`; RF-range options conflict with this mode.
+The legacy range workflow below is unchanged. `--fixed-azimuth --azimuth-deg 45`
+retains a single plane. Otherwise deterministic azimuth seeds and constrained
+refinement search bounded **coplanar families**, not arbitrary noncoplanar
+interactions or a certified global optimum. Both design modes retain their
+optical constraints. All retained candidates, including alternatives, must pass
+the package's numeric geometry checks. Narrow bounds can produce no feasible
+design rather than an invented drawing.
+
+The objective maximizes conditional predicted reachable useful first-order
+throughput with adjustable RF power; once saturated it minimizes first-peak
+power. This is not simultaneous optimization of bandwidth, thermal behavior,
+extinction or switching speed. The nominal RF equality is a hard constraint;
+the ±0.1% response assessment does **not** allow retuning the nominal optimum.
+
+Engineering inputs are separate from `Settings` in `teo2_design.py`. See
+`--help` for azimuth bounds, crystal envelope, duty cycle, beam diameter and
+strictly sub-1-W forward RF ceiling. Package defaults are a 10 × 10 × 10 mm
+crystal envelope, 3 mm interaction slab thickness, and a 7 × 3 mm acoustic
+wavefront. The larger area replaces the optimizer-only 5 × 1 mm default to leave
+room for the assumed beam footprint; explicitly supplied dimensions are not
+silently changed. Housing size remains unresolved and may exceed the crystal.
+`--rf-budget-w` must not conflict with the package's `--rf-ceiling-w`.
+Material overrides and all physics inputs are recorded in the optimizer report.
+
+### Outputs and conventions
+
+In addition to all legacy JSON/CSV/plot outputs, package mode writes
+`<prefix>_design.json`, a human-readable `<prefix>_design.md`, a separate
+crystal specification, `<prefix>_crystal.svg`, and `<prefix>_assembly.svg`.
+The manifest contains the BOM, acceptance checklist, assumptions, modeled
+predictions, unresolved interfaces and release blockers. The SVG is vector
+geometry; the assembly view is explicitly schematic, not an approved assembly
+fabrication drawing. No additional PDF-rendering dependency is required.
+
+Crystal axes are [100]/[010]/[001], not rounded integer Miller indices for
+continuous cuts. The lab/crystal transform and its direction are recorded,
+along with datums, face IDs, outward normals and numeric solid vertices.
+Entrance/exit optical faces are parallel; the external incident beam is normal
+to the entrance. The incident **wavevector** defines the optical face direction,
+not necessarily its internal energy ray. The oblique acoustic/transducer face
+is perpendicular to the acoustic wavevector, **not** acoustic group velocity.
+The solid is not forced to be a rectangular cube when those cuts are oblique.
+Ray/beam containment checks describe the declared finite Gaussian footprint,
+not containment of mathematically infinite Gaussian tails or a full overlap
+integral. Interaction length is distinct from overall crystal length.
+
+Air-side output direction conserves the tangential components of the internal
+dimensionless wavevector (`k λ / 2π`); its air-side normal component follows
+the isotropic air dispersion surface. This is valid for an extraordinary
+incident mode without substituting its Poynting direction into scalar Snell's
+law. Evanescent/TIR output is flagged. It does not calculate anisotropic
+Fresnel amplitudes, coating transmission or interface-induced mode conversion.
+The exit face normal is not the diffracted wavevector.
+
+### Requirements, assumptions and release
+
+- Useful output: first diffracted order, single pass, intensity modulation.
+- Polarized Gaussian beam: assumed 1 mm **1/e² intensity diameter**, waist near
+  interaction center, linear polarization selected/required by the optical mode.
+  Optical power is CW and below 10 mW. Linewidth is unspecified; modeled
+  monochromatically, not assigned an invented “typical” numerical value.
+- RF ceiling is forward connector power during RF-on periods, strictly below
+  1 W (default 0.9 W). Chosen power, model-delivered acoustic power, net accepted
+  electrical power and average duty-cycle power are distinct. Conversion=0.5,
+  unity overlap/transmission and zero loss remain **unvalidated model assumptions**,
+  not ideal-transducer or coating hardware facts. `--measured-vswr` is optional
+  user-supplied scalar evidence, not a simulator result; a forward-RF conversion
+  assumption exceeding the corresponding net accepted fraction is rejected.
+- Duty cycle is 1–100%; continuous-duty testing is required. Repetition rate and
+  pulse duration are unspecified. Transit diagnostics are not promised rise times.
+- Nominal 50 Ω is a required interface, not proof of matching. Passive VSWR is
+  `Vmax/Vmin ≥ 1`. **1:1000 is not an improved valid VSWR specification**;
+  the earlier reversal suggestion was incorrect. Literal 1000:1 would imply
+  about 99.60% reflected power. The prior ≤1.5:1 provisional proposal is
+  **superseded**, not an approved or measured requirement.
+- The user clarified the replacement specification: **RF return loss >30 dB**,
+  meaning **less than 0.1% of forward RF power reflected**, equivalently
+  **VSWR <1.0653109:1**. This is not optical insertion loss. The threshold is
+  configurable as `--return-loss-target-db`; the strict `>` inequality is
+  preserved. The 1 W clarification is a ratio example, not permission to relax
+  the strictly sub-1-W operating ceiling. Legacy `--vswr-target` is only a
+  superseded provisional setting, not the current acceptance criterion.
+- LiNbO₃ and vacuum cold welding are requested technologies; cut, thickness,
+  electrodes/metallization, bond stack, qualified process, matching network,
+  absorber and thermal interface remain unresolved until supported by evidence.
+  No resonance, conversion, predicted VSWR or temperature rise is fabricated.
+
+`design_status` distinguishes preliminary concept, review-ready and
+fabrication-released states. Generation or optimizer convergence cannot release
+fabrication. This implementation emits a concept package with outstanding
+blockers and **NOT FOR FABRICATION** marking. External evidence can be recorded,
+but an approval toggle does not establish qualification. Release requires
+hardware geometry/process, tolerances/performance, RF/thermal qualification and
+supplier review; each blocker names verification and acceptance requirements.
+Extinction, rise/fall time, linewidth and operating temperature require pending
+requirements, not guarantees.
+
+### Fabrication provenance and reference verification
+
+Intended supplier: **Crys-Teh**. Its numerical capabilities could not be verified
+in this environment (supplier/reference retrieval failed DNS resolution).
+The numerical fallback tolerances are **engineering-proposed requirements**,
+not Crys-Teh specifications, a universal industry standard, or demonstrated
+TeO₂ manufacturability. Each proposal records its selection rationale and
+qualification status. **Independent primary-source verification and written
+supplier acceptance are still required.** This is a known incomplete requirement,
+not an assertion that no supplier specification exists.
+
+Primary reference locations for supplier review (not verified quotations here):
+
+- [Crys-Teh](https://crys-teh.com/): request lot-specific cut/polish/coat quotation.
+- [Newport fabrication capabilities matrix](https://www.newport.com/medias/sys_master/images/images/hd8/h1a/8989202415646/Newport-Custom-Optics-Fabrication-Capabilities-Matrix.pdf):
+  obtain current material-specific limits; generic optics capabilities do not
+  qualify TeO₂.
+- [Edmund optical specification notation](https://www.edmundoptics.com/knowledge-center/application-notes/optics/understanding-optical-specifications/):
+  verify dimensional, flatness and surface-quality conventions.
+- ISO 10110 drawing notation and ISO 14997 surface-imperfection inspection:
+  standards specify notation/testing, not universally required tolerances.
+
+Flatness must identify surface versus transmitted wavefront, reference wavelength
+and evaluated aperture; roughness needs its metric and measurement bandwidth.
+Scratch-dig convention, wedge, chamfers and orientation datum must be agreed.
+Coatings need the actual runtime wavelength, incidence angles and polarization,
+with supplier-provided acceptance data; no automatic extrapolation of wavelength
+validity or assumed reflectance treated as measured transmission.
+
 ## Install and run
 
 Python 3.10 or newer is required. Extract the package, open PowerShell in the
@@ -111,10 +252,11 @@ is `s=sin(theta)*t+cos(theta)*Z`. Both signs of theta are searched.
 
 The transducer face is perpendicular to q. The interaction boundary normal is
 chosen along the nominal incident wavevector for each candidate, then kept fixed
-through its response sweeps. Optical entrance/exit refraction is not calculated.
-These are internal angles, not external alignment angles or a fabrication drawing.
+through its response sweeps. Legacy optimizer outputs contain internal angles,
+not a fabrication drawing. Package mode additionally constructs faces and
+calculates air-side output directions as described above.
 
-The optimization is within one selected crystal plane and the supplied bounds.
+The legacy optimization is within one selected crystal plane and the supplied bounds.
 It is not a certified global search of three-dimensional crystal orientation.
 Numerical angle precision is not manufacturing accuracy. Reciprocal polarization
 geometries and mirrored directions can have equally good objectives.
@@ -251,7 +393,8 @@ interpretation and `--strain-only` comparison are therefore explicitly reported.
 No experimental data establish a quantitative efficiency error bar here.
 
 Finite beam averaging, acoustic diffraction, full spatial overlap, transducer impedance
-and resonance, heating, and external face refraction are not modeled. Large acoustic
+and resonance, heating, and interface transmission are not modeled. Package mode
+adds geometric face refraction but not Fresnel/coating power transfer. Large acoustic
 walkoff can make the assumed interaction length physically unrealizable.
 The scalar Klein-Cook Q is a diagnostic for the two-wave approximation, not a
 sufficient multi-order validity test for anisotropic diffraction. Low values emit a warning.
