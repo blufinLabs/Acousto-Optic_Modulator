@@ -642,7 +642,7 @@ def _svg_crystal(geometry, tolerances):
     rows = [
         f"REVISION {DESIGN_REVISION}; design_status=preliminary_concept; no supplier/independent approval evidence.",
         f"Operating point: vacuum wavelength={operating['wavelength_nm']:.7g} nm; RF carrier={operating['rf_mhz']:.7g} MHz; optical shift sign={operating['diffraction_frequency_shift_sign']:+d}; acoustic eigenmode index={operating['acoustic_mode_index']}.",
-        f"RF interface requirement: return loss strictly >{operating['return_loss_target_db']:.7g} dB. Matching network and calibrated acceptance evidence absent.",
+        f"RF interface requirement: return loss >={operating['return_loss_target_db']:.7g} dB over [f_min, f_max], with port 2 terminated in 50 ohms. Matching network and calibrated sweep evidence absent.",
         "DATUMS: A entrance (outward -incident k), B parallel exit (+incident k), C acoustic mount (outward -q).",
         "Origin: nominal blank center. Local x,y,z and crystal X=[100],Y=[010],Z=[001] are right-handed.",
         "FACE PLANES: outward unit n; material satisfies n dot local_position <= offset_mm. Polygons use vertex IDs below.",
