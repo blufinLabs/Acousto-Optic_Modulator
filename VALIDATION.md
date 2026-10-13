@@ -1,5 +1,15 @@
 # Validation — version 0.2.0, 12 October 2026
 
+## RF input-match requirement update — 13 October 2026
+
+The current requirement is inclusive: input return loss >=30 dB (S11 <=-30 dB),
+reflected power <=0.1%, and VSWR <=1.065:1 over [f_min, f_max], with port 2
+terminated in 50 ohms. The exact VSWR corresponding to 30 dB is 1.0653109:1;
+the specified 1.065:1 limit is slightly stricter. Numerical band endpoints
+remain to be agreed. A supplied scalar VSWR does not establish band compliance.
+This is an acceptance requirement, not a measured result or optical insertion
+loss.
+
 ## Engineering-package extension — 13 October 2026
 
 Validation here concerns numerical behavior and generated artifacts, **not
@@ -34,7 +44,7 @@ yield or a coupled worst-case tolerance analysis. Finite Gaussian-envelope
 containment is not full overlap validation; infinite tails are excluded according
 to the reported threshold.
 
-**VSWR correction:** passive VSWR is Vmax/Vmin ≥1. Reversal from 1000:1 to
+**Historical requirement:** passive VSWR is Vmax/Vmin ≥1. Reversal from 1000:1 to
 1:1000 is not better or valid; the previous suggestion was wrong. The user's
 subsequent “insertion loss (VSWR) >30 dB” request supersedes the prior
 provisional ≤1.5:1 target. The user clarified **less than 0.1% of forward RF
@@ -43,6 +53,8 @@ power reflected**, confirming **RF return loss >30 dB**, equivalent to
 insertion loss or a measured result. Nominal 50 Ω alone cannot establish
 reflected or net accepted RF power. The 1 W illustration does not relax the
 strictly sub-1-W power ceiling.
+The latest requirement above supersedes this historical strict-inequality
+interpretation.
 
 No supplier capability, cold-weld process, LiNbO₃ conversion, coating,
 temperature rise, continuous-duty endurance, switching time or extinction was

@@ -494,8 +494,8 @@ BLOCKERS = [
 def _blocker_records(messages, e):
     plans = [
         ("Archive the clarified", "rf-requirement-protocol",
-         "Obtain a signed RF requirement; measure calibrated complex S11 at the agreed 50-ohm reference plane, nominal carrier and +/-0.1%, operational power and temperature.",
-         f"Archive the clarified replacement: RF return loss strictly >{e.return_loss_target_db:g} dB, reflected power fraction strictly <10^(-target_dB/10). Calibrated results including uncertainty pass; old invalid/reversed VSWR is not acceptance."),
+         "Obtain a signed RF requirement; measure calibrated complex S11 with port 2 terminated in 50 ohms across the specified [f_min, f_max] band, at operational power and temperature.",
+         f"Archive the clarified replacement: RF return loss >= {e.return_loss_target_db:g} dB, reflected power fraction <=10^(-target_dB/10), and VSWR <=1.065:1. Calibrated results including uncertainty pass; old invalid/reversed VSWR is not acceptance."),
         ("Qualify crystal", "material-lot",
          "Review lot certificate, X-ray/Laue orientation and polarization-dependent optical/acoustic characterization at the requested wavelength.",
          "Accept only traceable lot data and tensor/loss/optical-activity uncertainty bounds approved for this model and operating point; numerical loss and uncertainty limits remain TBD."),
@@ -513,7 +513,7 @@ def _blocker_records(messages, e):
          "A validated metallized-stack drawing and welding process pass approved thickness, void fraction, loss and thermal/mechanical limits without crystal damage. Layer materials/thicknesses, vacuum/pressure/temperature/duration and numerical acceptance limits remain TBD; no weldability of bare TeO2/LiNbO3 is assumed."),
         ("Measure complex", "rf-match",
          "Calibrate vector RF measurements and forward/reflected power at the feedthrough across RF, temperature and selected power; qualify matching components and resonance.",
-         f"Measured RF return loss is strictly >{e.return_loss_target_db:g} dB, with reflected fraction strictly <10^(-target_dB/10), across nominal +/-0.1% RF including uncertainty and without ratings violations; accepted RF and conversion use a consistent reference plane."),
+         f"Measured RF return loss is >={e.return_loss_target_db:g} dB, reflected fraction <=10^(-target_dB/10), and VSWR <=1.065:1 throughout [f_min, f_max], including uncertainty and without ratings violations; port 2 is terminated in 50 ohms and RF/conversion use a consistent reference plane."),
         ("Thermal model", "continuous-duty-thermal",
          "Calculate and measure crystal, transducer, bond and absorber temperatures and drift under continuous 100% duty at selected RF, regardless of requested duty; include optical absorption and heat-sink contact.",
          "All temperatures, drift and stress stay below approved component/application limits for an approved endurance duration and uncertainty budget. Temperature limits, drift bounds and duration are unresolved; pulsed duty alone cannot qualify release."),
@@ -733,8 +733,7 @@ def write_design_package(report, engineering, prefix):
     gamma_limit = math.sqrt(reflection_limit)
     vswr_limit = None if gamma_limit >= 1 else (1+gamma_limit)/(1-gamma_limit)
     measured_return_loss = None if gamma is None or gamma == 0 else -20*math.log10(gamma)
-    meets_return_loss = (None if gamma is None else
-                        gamma == 0 or measured_return_loss > e.return_loss_target_db)
+    meets_return_loss = (None if gamma is None else e.measured_vswr <= vswr_limit)
     blockers = BLOCKERS.copy()
     if not geometry["feasible"]:
         blockers.insert(0, "Geometry infeasible: "+"; ".join(geometry["failures"]))
@@ -843,7 +842,7 @@ def write_design_package(report, engineering, prefix):
     acceptance = [
         dict(test="Dimensional and crystallographic inspection", criterion="Supplier-approved dimensions, directed face normals, cut and optical parallelism; finite-envelope aperture recheck including chamfers", evidence=None),
         dict(test="Optical surface and transmission", criterion="Agree scratch/dig, surface-PV flatness at 632.8 nm over the declared aperture plus approved guard band, bandwidth-defined areal Sq roughness, coating and polarization; measure transmission. Roughness limits/bandwidth pending.", evidence=None),
-        dict(test="RF impedance / return loss", criterion=f"Measure calibrated S11 at the agreed 50-ohm crystal feedthrough across nominal ±0.1% RF, power and temperature. Return loss must be strictly >{e.return_loss_target_db:g} dB and reflected forward-power fraction strictly <{reflection_limit:g}, including uncertainty; legacy VSWR <=1.5 proposal is superseded.", evidence=None),
+        dict(test="RF impedance / return loss", criterion=f"Measure calibrated input S11 with port 2 terminated in 50 Ω across [f_min, f_max] (numerical endpoints to be agreed), power and temperature. Return loss must be >={e.return_loss_target_db:g} dB, reflected forward-power fraction <={reflection_limit:g}, and VSWR <=1.065:1, including uncertainty; legacy VSWR <=1.5 proposal is superseded.", evidence=None),
         dict(test="Conditional diffraction model", criterion="Compare measured efficiency with modeled nominal and ±0.1% RF at fixed selected power; measurement uncertainty and pass threshold must be approved", evidence=None),
         dict(test="Thermal / endurance", criterion=f"Run continuous 100% duty regardless of requested {e.duty_cycle_percent:g}% duty; measure crystal/bond/transducer/absorber temperatures and drift. Approved safe maxima, uncertainty and endurance duration TBD.", evidence=None),
         dict(test="Dynamic, spectral and extinction", criterion="User-approved linewidth, rise/fall and extinction requirements TBD; no inferred guarantees", evidence=None),
@@ -882,25 +881,34 @@ def write_design_package(report, engineering, prefix):
                             target_vswr=e.vswr_target, measured_vswr=None if gamma is None else e.measured_vswr,
                             target_vswr_status="Superseded provisional setting, not the current RF acceptance criterion",
                             return_loss_target_db=e.return_loss_target_db,
-                            return_loss_comparison="strictly greater than",
+                            return_loss_comparison="greater than or equal to",
                             reflected_power_fraction_limit=reflection_limit,
-                            reflected_power_fraction_comparison="strictly less than",
-                            equivalent_vswr_strict_upper_limit=vswr_limit,
+                            reflected_power_fraction_comparison="less than or equal to",
+                            s11_db_upper_limit=-e.return_loss_target_db,
+                            equivalent_vswr_limit=vswr_limit,
+                            stated_vswr_limit=1.065,
+                            stated_vswr_comparison="less than or equal to",
+                            rf_match_frequency_band="[f_min, f_max]; numerical endpoints to be agreed",
+                            port2_termination_ohm=50,
                             return_loss_requirement_confirmed=True,
                             return_loss_requirement_basis="Clarified replacement RF requirement recorded in README; a specified requirement is not measured matching evidence",
                             measured_reflection_magnitude=gamma, net_accepted_rf_w=accepted,
                             measured_return_loss_db=measured_return_loss,
                             supplied_vswr_is_zero_reflection_limit=gamma == 0 if gamma is not None else None,
                             return_loss_meets_target_from_supplied_vswr=meets_return_loss,
+                            measured_vswr_meets_stated_limit=None if gamma is None else e.measured_vswr <= 1.065,
+                            measured_point_meets_rf_limits=None if gamma is None else
+                                meets_return_loss and e.measured_vswr <= 1.065,
                             reflected_power_limit_at_selected_rf_w=power*reflection_limit,
-                            match_evidence="User-supplied scalar measurement, calibration/power/temperature records still required" if gamma is not None else "No measured match supplied",
+                            match_evidence="User-supplied single-point VSWR only; calibrated band-sweep evidence with port 2 terminated in 50 ohms is still required" if gamma is not None else "No measured match supplied; calibrated band sweep with port 2 terminated in 50 ohms is required",
+                            measured_vswr_is_band_compliance_evidence=False,
                             target_reflected_fraction=reflection_limit,
                             legacy_vswr_reflected_fraction=((e.vswr_target-1)/(e.vswr_target+1))**2,
                             net_accepted_note="Paccepted=Pforward*(1-|Gamma|^2) only at the same calibrated reference plane. Target never substituted for measurement; cable loss unprovided.",
                             requirement_history=dict(original="1000:1", subsequent="1:1000",
                                                      standard="VSWR >= 1", reversal_valid=False,
                                                      resolved=True, superseded=True,
-                                                     resolution="Replacement is RF return loss, not a repaired sub-unity VSWR: return loss strictly greater than the configured dB threshold")),
+                                                     resolution="Current requirement is inclusive RF return loss >= the configured dB threshold across [f_min, f_max], with port 2 terminated in 50 ohms")),
                     conditional_assumptions=dict(rf_to_acoustic_conversion=inputs["conversion"],
                                                  optical_transmission=inputs["optical_transmission"],
                                                  overlap_intensity_factor=inputs["overlap"],
@@ -924,7 +932,8 @@ def write_design_package(report, engineering, prefix):
              f"- Conditional nominal throughput: {nominal['throughput_efficiency_fraction']}; geometry feasible: {geometry['feasible']}.",
              "- Modeled conversion, transmission and overlap are conditional assumptions, not measured evidence.",
              f"- Measured VSWR: {manifest['rf']['measured_vswr']}; net accepted RF: {accepted} W (null/None means unavailable).",
-             f"- Clarified RF return-loss requirement: strictly >{e.return_loss_target_db:g} dB; reflected fraction strictly <{reflection_limit:g}; equivalent VSWR strictly <{vswr_limit}. This is RF matching, not optical insertion loss.",
+             f"- RF input-match requirement: return loss >={e.return_loss_target_db:g} dB (S11 <= {-e.return_loss_target_db:g} dB), reflected fraction <={reflection_limit:g}, and VSWR <=1.065:1 over [f_min, f_max], with port 2 terminated in 50 Ω.",
+             f"- Exact VSWR limit corresponding to {e.return_loss_target_db:g} dB return loss is {vswr_limit:.9g}:1; the stated 1.065:1 cap is slightly stricter. Numerical band endpoints remain to be agreed.",
              "- Standard VSWR is >=1. Original 1000:1 then invalid reversal 1:1000 and provisional <=1.5:1 are superseded by the clarified return-loss requirement, not measured matching evidence.",
              "", "## Geometry and beam envelope",
              f"- Nominal blank: {e.crystal_length_mm:g} x {e.crystal_width_mm:g} x {e.crystal_height_mm:g} mm; clipped volume {geometry['volume_mm3']:.6g} mm^3.",

@@ -119,11 +119,15 @@ matching. User intent was unresolved; ≤1.5:1 was only a provisional proposed t
 Nominal 50 Ω is not evidence of measured VSWR. Linewidth, switching targets,
 extinction and temperature requirements remain unspecified.
 
-The subsequent user request, “insertion loss (VSWR) >30 dB,” supersedes the
+The subsequent user request, “insertion loss (VSWR) >30 dB,” superseded the
 old provisional target. VSWR, RF return loss and optical insertion loss are
 different metrics. The user then confirmed “for 1 watt inserted, less than 0.1%
-is returned”: this is **RF return loss >30 dB**, now the current confirmed
-specification. RF return loss is `-20 log10(|Gamma|)`; >30 dB implies
-`|Gamma| <10^(-30/20)` and `VSWR <(1+|Gamma|)/(1-|Gamma|) =1.0653109`.
-It does not imply optical insertion loss >30 dB or establish measured RF match.
-The 1 W example does not change the strictly sub-1-W operating power ceiling.
+is returned,” which was recorded as strict >30 dB return loss. The current
+requirement supersedes that strict inequality: input return loss >=30 dB
+(S11 <=-30 dB), reflected power <=0.1%, and VSWR <=1.065:1 across [f_min,
+f_max], with port 2 terminated in 50 ohms. Return loss is
+`-20 log10(|Gamma|)`; exactly 30 dB corresponds to VSWR 1.0653109:1, so the
+stated 1.065:1 cap is slightly stricter. The numerical band endpoints remain
+to be agreed. None of these requirements is optical insertion loss or measured
+RF-match evidence. The 1 W example does not change the strictly sub-1-W
+operating power ceiling.

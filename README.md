@@ -101,13 +101,14 @@ The exit face normal is not the diffracted wavevector.
   the earlier reversal suggestion was incorrect. Literal 1000:1 would imply
   about 99.60% reflected power. The prior ≤1.5:1 provisional proposal is
   **superseded**, not an approved or measured requirement.
-- The user clarified the replacement specification: **RF return loss >30 dB**,
-  meaning **less than 0.1% of forward RF power reflected**, equivalently
-  **VSWR <1.0653109:1**. This is not optical insertion loss. The threshold is
-  configurable as `--return-loss-target-db`; the strict `>` inequality is
-  preserved. The 1 W clarification is a ratio example, not permission to relax
-  the strictly sub-1-W operating ceiling. Legacy `--vswr-target` is only a
-  superseded provisional setting, not the current acceptance criterion.
+- The current input-match requirement is **return loss ≥30 dB (S11 ≤−30 dB)**,
+  reflected power **≤0.1%**, and **VSWR ≤1.065:1** over `[f_min, f_max]`, with
+  port 2 terminated in 50 Ω. Exactly 30 dB corresponds to VSWR 1.0653109:1, so
+  the stated 1.065:1 cap is slightly stricter. Numerical band endpoints must be
+  agreed; a supplied scalar VSWR is not evidence of band compliance. This is
+  RF matching, not optical insertion loss. `--return-loss-target-db` configures
+  the dB threshold. Legacy `--vswr-target` is only a superseded provisional
+  setting, not the current acceptance criterion.
 - LiNbO₃ and vacuum cold welding are requested technologies; cut, thickness,
   electrodes/metallization, bond stack, qualified process, matching network,
   absorber and thermal interface remain unresolved until supported by evidence.

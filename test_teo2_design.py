@@ -354,17 +354,24 @@ class DesignChecks(unittest.TestCase):
         self.assertAlmostEqual(data["rf"]["measured_reflection_magnitude"], 1/3)
         self.assertFalse(data["rf"]["return_loss_meets_target_from_supplied_vswr"])
 
-    def test_clarified_return_loss_is_strict_and_not_optical_or_measured_match(self):
+    def test_rf_match_requirement_is_inclusive_band_limited_and_not_optical_loss(self):
         paths = self.package()
         data = json.loads(Path(paths["design_json"]).read_text())
         rf = data["rf"]
         self.assertEqual(rf["return_loss_target_db"], 30)
         self.assertEqual(rf["reflected_power_fraction_limit"], 0.001)
-        self.assertAlmostEqual(rf["equivalent_vswr_strict_upper_limit"], 1.0653108640674351)
-        self.assertEqual(rf["return_loss_comparison"], "strictly greater than")
+        self.assertAlmostEqual(rf["equivalent_vswr_limit"], 1.0653108640674351)
+        self.assertEqual(rf["stated_vswr_limit"], 1.065)
+        self.assertEqual(rf["return_loss_comparison"], "greater than or equal to")
+        self.assertEqual(rf["reflected_power_fraction_comparison"], "less than or equal to")
+        self.assertEqual(rf["s11_db_upper_limit"], -30)
+        self.assertEqual(rf["rf_match_frequency_band"],
+                         "[f_min, f_max]; numerical endpoints to be agreed")
+        self.assertEqual(rf["port2_termination_ohm"], 50)
         self.assertIsNone(rf["measured_return_loss_db"])
         self.assertIsNone(rf["return_loss_meets_target_from_supplied_vswr"])
         self.assertIsNone(rf["net_accepted_rf_w"])
+        self.assertFalse(rf["measured_vswr_is_band_compliance_evidence"])
         self.assertTrue(rf["return_loss_requirement_confirmed"])
         for value in (0, -1, 301, float("nan")):
             with self.subTest(value=value), self.assertRaises(ValueError):
@@ -376,7 +383,23 @@ class DesignChecks(unittest.TestCase):
         self.assertTrue(data["rf"]["supplied_vswr_is_zero_reflection_limit"])
         self.assertIsNone(data["rf"]["measured_return_loss_db"])  # Infinite ideal limit, not JSON infinity.
         self.assertTrue(data["rf"]["return_loss_meets_target_from_supplied_vswr"])
+        self.assertTrue(data["rf"]["measured_vswr_meets_stated_limit"])
+        self.assertTrue(data["rf"]["measured_point_meets_rf_limits"])
         self.assertFalse(data["fabrication_release"])
+        shutil.rmtree(self.artifact_directory)
+        self.artifact_directory = None
+        at_limit = (1+math.sqrt(0.001))/(1-math.sqrt(0.001))
+        paths = self.package(replace(self.engineering, measured_vswr=at_limit))
+        data = json.loads(Path(paths["design_json"]).read_text())
+        self.assertTrue(data["rf"]["return_loss_meets_target_from_supplied_vswr"])
+        self.assertFalse(data["rf"]["measured_vswr_meets_stated_limit"])
+        self.assertFalse(data["rf"]["measured_point_meets_rf_limits"])
+        shutil.rmtree(self.artifact_directory)
+        self.artifact_directory = None
+        paths = self.package(replace(self.engineering, measured_vswr=1.065))
+        data = json.loads(Path(paths["design_json"]).read_text())
+        self.assertTrue(data["rf"]["measured_point_meets_rf_limits"])
+        self.assertFalse(data["rf"]["measured_vswr_is_band_compliance_evidence"])
 
     def test_ceiling_violation_stays_blocked(self):
         paths = self.package(replace(self.engineering, rf_ceiling_w=0.001))
