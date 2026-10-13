@@ -318,6 +318,8 @@ class DesignChecks(unittest.TestCase):
                          ["preliminary_concept", "review_ready", "fabrication_released"])
         self.assertTrue(data["design_status_reasons"])
         self.assertFalse(data["fabrication_release"])
+        self.assertIsNone(data["conditional_assumptions"]["interaction_slab_physically_realized"])
+        self.assertTrue(any(b["id"] == "physical-interaction-length" for b in data["release_blockers"]))
         for blocker in data["release_blockers"]:
             self.assertTrue(blocker["verification"])
             self.assertTrue(blocker["acceptance_criterion"])

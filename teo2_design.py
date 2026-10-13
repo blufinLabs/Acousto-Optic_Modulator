@@ -348,7 +348,8 @@ def crystal_geometry(report, engineering):
                 bounded_optical_envelope_box_local_mm=[lower.tolist(), upper.tolist()],
                 bounded_optical_volume_upper_bound_mm3=float(np.prod(upper-lower)),
                 volume_definition="Conservative ray-envelope bounding prism over the interaction slab, not actual Gaussian intensity volume or an optical/acoustic overlap integral. Its corners may extend outside the clipped crystal; feasibility tests the ray envelopes, not this prism.",
-                volume_validity="Valid for the explicitly bounded constant-radius ray model only; not a diffraction/divergence calculation.")
+                volume_validity="Valid for the explicitly bounded constant-radius ray model only; not a diffraction/divergence calculation.",
+                physical_boundary_status="Model slab boundaries only, not a verified acoustic-field cutoff. The active wavefront can cause coupling outside this slab; physical localization/effective interaction length is a release blocker.")
     return dict(feasible=not failures, failures=list(dict.fromkeys(failures)),
                 feasibility_margins=constraint_values,
                 feasibility_margin_names=constraint_names,
@@ -470,7 +471,7 @@ def _performance(report, e):
                         internal_alignment=alignment, acoustic_cut=cut,
                         interaction_thickness=length, crystal_dimensions=dimension_geometry,
                         method="Explicit fixed-design perturbations; no RF retuning or reoptimization. Cut perturbations recompute acoustic eigenmode and coupling.",
-                        limitations="Independent perturbations, not a worst-case Monte Carlo/yield analysis. Dimension cases reconstruct the nominal facet layout; machining errors at a fixed facet position are not bounded. Internal alignment is not external mount-angle tolerance; transducer resonance, face-cut refraction/coupling, beam diffraction and thermal changes omitted."))
+                        limitations="Independent perturbations, not a worst-case Monte Carlo/yield analysis. L perturbations assume the declared interaction slab is physically realized; the active-area geometry does not establish its field cutoff. Dimension cases reconstruct the nominal facet layout; machining errors at a fixed facet position are not bounded. Internal alignment is not external mount-angle tolerance; transducer resonance, face-cut refraction/coupling, beam diffraction and thermal changes omitted."))
 
 
 BLOCKERS = [
@@ -482,6 +483,7 @@ BLOCKERS = [
     "Specify and qualify the requested vacuum cold-welding metallized bond stack: materials, thickness, acoustic impedance, void fraction, cleanliness, vacuum, pressure, temperature, process and electrode interconnect are unresolved; bare oxide surfaces are not assumed cold-weldable.",
     "Measure complex transducer impedance versus RF, temperature and power; synthesize and qualify matching network, feedthrough and 50-ohm reference plane.",
     "Thermal model and continuous 100% duty test at selected RF are mandatory regardless of requested duty: conversion loss, absorber loss, optical absorption, thermal contact and allowable crystal/bond temperature unresolved.",
+    "Establish physical interaction boundaries and effective coupling length: the declared model slab is not automatically realized by the larger acoustic active rectangle; coupling outside it can change the RF power response.",
     "Validate finite optical/acoustic beam overlap, acoustic diffraction/walkoff, absorber placement/reflections and multichannel/multiorder coupling.",
     "Coating prescription and measured polarization-dependent optical transmission/Fresnel loss unresolved.",
     "Independent measured RF detuning, efficiency, extinction, spectral linewidth, rise/fall time, damage and temperature performance required; no values invented.",
@@ -515,6 +517,9 @@ def _blocker_records(messages, e):
         ("Thermal model", "continuous-duty-thermal",
          "Calculate and measure crystal, transducer, bond and absorber temperatures and drift under continuous 100% duty at selected RF, regardless of requested duty; include optical absorption and heat-sink contact.",
          "All temperatures, drift and stress stay below approved component/application limits for an approved endurance duration and uncertainty budget. Temperature limits, drift bounds and duration are unresolved; pulsed duty alone cannot qualify release."),
+        ("Establish physical", "physical-interaction-length",
+         "Map acoustic intensity along the incident/diffracted rays throughout the entire crystal, including outside the declared slab. Qualify field localization/apodization or solve the full spatial coupled-wave problem, and measure the RF-power response.",
+         "Approved physical field boundaries or an experimentally qualified integrated coupling model support the selected interaction length and power response within approved error bounds. Active-area fit alone does not establish the slab length or nominal efficiency; error limits and localization design are unresolved."),
         ("Validate finite", "finite-field",
          "Map optical/acoustic fields, walkoff and reflection/diffraction; inspect the as-built geometry including ceramic borders/chamfers and perturbation corners; compare measured diffraction with the conditional model.",
          "Declared bounded Gaussian power, all as-built geometric margins, acoustic coverage and application-approved efficiency/error limits pass. No claim of containing infinite tails or guaranteed modeled overlap."),
@@ -655,6 +660,7 @@ def _svg_crystal(geometry, tolerances):
         f"  Incident signed theta={angles['incident_wavevector_signed_to_c_deg']:.7g}; diffracted signed theta={angles['diffracted_wavevector_signed_to_c_deg']:.7g}",
         f"  Polarizations i={geometry['optical_polarizations']['incident']}, d={geometry['optical_polarizations']['diffracted']}; q crystal={vector(geometry['acoustic_wave_normal_unit_crystal'])}",
         f"INTERACTION SLAB: x={slab['x_interval_mm']} mm; thickness={slab['thickness_mm']:.7g} mm, versus crystal face separation={slab['crystal_optical_face_separation_mm']:.7g} mm.",
+        "  Slab is a model assumption: physical RF-field cutoff/effective coupling length unresolved; active area can couple outside it.",
         f"  Bounded optical prism lower={vector(slab['bounded_optical_envelope_box_local_mm'][0])}, upper={vector(slab['bounded_optical_envelope_box_local_mm'][1])} mm",
         f"  Optical-envelope volume upper bound={slab['bounded_optical_volume_upper_bound_mm3']:.7g} mm3; NOT Gaussian intensity or overlap volume.",
         f"TRANSDUCER ACTIVE AREA: {mount['wavefront_dimensions_mm']} mm, {mount['active_acoustic_area_mm2']:.7g} mm2; center={vector(mount['center_local_mm'])} mm.",
@@ -802,6 +808,14 @@ def write_design_package(report, engineering, prefix):
                               attempted_primary_sources=["Crys-Teh supplier qualification", "Newport fabrication capabilities matrix"],
                               evidence=None)
     surface = reference["surface_quality"]["per_value_proposals"]
+    reference["substrate_orientation"]["angular_error_definition"] = (
+        "Maximum geodesic rotation angle between nominal and measured right-handed crystal frames; "
+        "not independently summed Euler-angle tolerances.")
+    reference["optical_face_orientation"]["angular_error_definition"] = (
+        "Angle between the prescribed and measured directed unit face normals <= proposed value; "
+        "+/- denotes either tilt sign, not separately compounded pitch/yaw limits.")
+    surface["parallelism"]["angular_error_definition"] = (
+        "acos(-n_A dot n_B), since entrance/exit outward normals are antiparallel, <= proposed arcsec.")
     surface["surface_flatness"]["reference_aperture"] = dict(
         frame="local drawing frame, mm", datum_faces=["A", "B"],
         region="Union of explicitly bounded optical ellipse footprints on each face",
@@ -890,6 +904,9 @@ def write_design_package(report, engineering, prefix):
                     conditional_assumptions=dict(rf_to_acoustic_conversion=inputs["conversion"],
                                                  optical_transmission=inputs["optical_transmission"],
                                                  overlap_intensity_factor=inputs["overlap"],
+                                                 interaction_slab_physically_realized=None,
+                                                 interaction_length_status="Declared model thickness; active-area fit does not prove field localization or full-crystal coupled-wave response",
+                                                 efficiency_time_basis="Steady RF-on two-wave response at selected forward power, not duty-cycle-averaged optical efficiency. Envelope transients and repetition timing are unmodeled.",
                                                  interpretation="User model assumptions, not measured efficiency/transmission/match. Conversion denominator must be calibrated; accepted RF is not silently reapplied to avoid double counting."),
                     unmodeled_performance=dict(spectral_linewidth_nm=None, rise_time_ns=None,
                                                extinction_ratio=None, allowable_temperature_c=None,
@@ -917,6 +934,7 @@ def write_design_package(report, engineering, prefix):
              "- Air exit conserves tangential dimensionless k exactly and uses sqrt(1-|b_t|^2), with explicit TIR flags, not scalar extraordinary Snell.",
              "- Numeric vertices, face polygons/outward normals, halfspaces, transforms, beam footprints and acoustic group-walkoff checks are in the JSON spec.",
              f"- Interaction slab: {geometry['interaction_slab']['thickness_mm']:g} mm, not the {e.crystal_length_mm:g} mm crystal length. Bounded optical-prism volume upper bound: {geometry['interaction_slab']['bounded_optical_volume_upper_bound_mm3']:.6g} mm^3, not an intensity/overlap volume.",
+             "- The slab is a model assumption, not a verified RF-field cutoff. The active area can cause coupling outside it; localization or a full spatial coupled-wave calculation and measured RF-power response are release blockers.",
              f"- Fitted acoustic active area: {inputs['acoustic_width_mm']:g} x {inputs['acoustic_height_mm']:g} mm. Total ceramic, electrode border and bond/interconnect footprint remain unresolved.",
              "", "## Fixed-design performance and tolerances",
              "- RF carrier +/-0.1% is evaluated at the same chosen power, wavelength and cut; no retuning.",
