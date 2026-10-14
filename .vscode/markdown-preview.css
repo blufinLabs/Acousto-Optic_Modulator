@@ -1,0 +1,20 @@
+html {
+  min-height: 100% !important;
+  height: auto !important;
+  overflow-y: auto !important;
+}
+
+body.vscode-body,
+body.vscode-body .markdown-body {
+  height: auto !important;
+  max-height: none !important;
+  min-height: 100vh !important;
+}
+
+body.vscode-body {
+  overflow-y: auto !important;
+}
+
+body.vscode-body .markdown-body {
+  overflow: visible !important;
+}
