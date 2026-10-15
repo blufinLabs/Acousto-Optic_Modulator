@@ -1,14 +1,19 @@
 """Numerical/physical regression checks, not experimental validation."""
 import math
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from pathlib import Path
 
 import numpy as np
 
 from teo2_optimizer import (Material, Model, Settings, acoustic_modes,
                             christoffel, impermeability, indices, response,
                             rotational_impermeability, flux_projection, two_wave_efficiency,
-                            optimize)
+                            optimize, optimize_design)
 from fit_dispersion import fit, WAVELENGTH_UM, OBSERVED, UNCERTAINTY
 
 
@@ -154,6 +159,114 @@ class PhysicsChecks(unittest.TestCase):
         self.assertAlmostEqual(r["rf_mhz"], 80, places=6)
         self.assertLess(abs(r["parallel_tangent_residual"]), 1e-10)
         self.assertLess(r["dimensionless_surface_residual"], 1e-12)
+
+    def test_winning_azimuth_response_and_old_report_compatibility(self):
+        changed = replace(self.settings, azimuth_deg=37)
+        rec = Model(changed).record(0, 15, 0, "o", "e", 1)
+        report = dict(inputs=asdict(self.settings), material=asdict(self.material), optimum=rec)
+        eta, mismatch = response(report)
+        self.assertAlmostEqual(float(eta), rec["throughput_efficiency"], places=10)
+        self.assertLess(abs(float(mismatch)), 1e-6)
+        old_report = dict(self.report, optimum=dict(self.record))
+        old_report["optimum"].pop("azimuth_deg")
+        old_eta, _ = response(old_report)
+        self.assertAlmostEqual(float(old_eta), self.record["throughput_efficiency"], places=10)
+
+
+class PackageSearchChecks(unittest.TestCase):
+    def cli(self, *args):
+        script = Path(__file__).resolve().with_name("teo2_optimizer.py")
+        return subprocess.run([sys.executable, str(script), *args],
+                              capture_output=True, text=True, timeout=120)
+
+    def test_package_cli_runtime_inputs_and_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            prefix = str(Path(directory)/"example")
+            result = self.cli("--design-package", "--wavelength-nm", "632.8",
+                              "--rf-mhz", "60", "--fixed-azimuth",
+                              "--design-mode", "wide-aperture", "--acoustic-mode", "slow",
+                              "--incident", "e", "--grid-deg", "5", "--output-prefix", prefix)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            report = json.loads(Path(prefix+".json").read_text(),
+                                parse_constant=lambda x: self.fail(f"Nonfinite JSON: {x}"))
+            self.assertEqual(report["inputs"]["wavelength_nm"], 632.8)
+            self.assertAlmostEqual(report["optimum"]["rf_mhz"], 60, places=6)
+            manifest = json.loads(Path(prefix+"_design.json").read_text(),
+                                  parse_constant=lambda x: self.fail(f"Nonfinite JSON: {x}"))
+            self.assertIn("design_status", manifest)
+            self.assertEqual(manifest["rf"]["return_loss_target_db"], 30)
+            self.assertEqual(manifest["rf"]["reflected_power_fraction_limit"], 0.001)
+            self.assertTrue(manifest["rf"]["return_loss_requirement_confirmed"])
+            self.assertIn("NOT FOR FABRICATION", result.stdout)
+            self.assertTrue(Path(prefix+"_crystal.svg").is_file())
+            self.assertTrue(Path(prefix+"_assembly.svg").is_file())
+
+    def test_package_cli_rejects_missing_invalid_conflicting_requirements(self):
+        for extra in ([], ["--rf-mhz", "nan"],
+                      ["--rf-mhz", "80", "--rf-ceiling-w", "1"],
+                      ["--rf-mhz", "80", "--duty-cycle-percent", "0"],
+                      ["--rf-mhz", "80", "--duty-cycle-percent", "0.5"],
+                      ["--rf-mhz", "80", "--vswr-target", "0.001"],
+                      ["--rf-mhz", "80", "--return-loss-target-db", "nan"],
+                      ["--rf-mhz", "80", "--measured-vswr", "1000"],
+                      ["--rf-mhz", "80", "--rf-min-mhz", "20"],
+                      ["--rf-mhz", "80", "--rf-budget-w", "1"]):
+            with self.subTest(extra=extra):
+                result = self.cli("--design-package", "--wavelength-nm", "532", *extra)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("error:", result.stderr)
+        missing_wavelength = self.cli("--design-package", "--rf-mhz", "80")
+        self.assertNotEqual(missing_wavelength.returncode, 0)
+
+    def test_bounded_azimuth_fixed_rf_and_feasible_alternatives(self):
+        from teo2_design import DesignSettings, crystal_geometry
+        engineering = DesignSettings(azimuth_min_deg=40, azimuth_max_deg=50,
+                                     azimuth_step_deg=10)
+        settings = Settings(532, design_mode="wide-aperture", acoustic_mode="slow",
+                            incident="e", rf_min_mhz=80, rf_max_mhz=80, grid_deg=5,
+                            length_mm=3, acoustic_width_mm=7, acoustic_height_mm=3)
+        report = optimize_design(settings, engineering)
+        for rec in [report["optimum"]]+report["alternatives"]:
+            self.assertLessEqual(abs(rec["rf_mhz"]-80), 1e-6)
+            self.assertTrue(40 <= rec["azimuth_deg"] <= 50)
+            candidate = dict(report, optimum=rec)
+            self.assertTrue(crystal_geometry(candidate, engineering)["feasible"])
+        self.assertEqual(report["inputs"]["azimuth_deg"], report["optimum"]["azimuth_deg"])
+        eta, mismatch = response(report)
+        self.assertAlmostEqual(float(eta), report["optimum"]["throughput_efficiency"], places=9)
+        self.assertLess(abs(float(mismatch)), 1e-5)
+        self.assertIn("COPLANAR", report["search"]["domain"])
+        self.assertIn(45, report["search"]["azimuth_seeds_deg"])
+        self.assertTrue(all(40 <= row["azimuth_deg"] <= 50 for row in report["coarse_cut_scan"]))
+
+    def test_fixed_azimuth_compatibility_and_reject_range(self):
+        from teo2_design import DesignSettings
+        engineering = DesignSettings(fixed_azimuth=True)
+        with self.assertRaisesRegex(ValueError, "fixed nominal"):
+            optimize_design(Settings(532), engineering)
+        with self.assertRaisesRegex(ValueError, "azimuth bounds"):
+            optimize_design(Settings(532, azimuth_deg=100, rf_min_mhz=80, rf_max_mhz=80),
+                            engineering)
+        settings = Settings(532, design_mode="wide-aperture", acoustic_mode="slow",
+                            incident="e", rf_min_mhz=80, rf_max_mhz=80, grid_deg=5,
+                            length_mm=3, acoustic_width_mm=7, acoustic_height_mm=3)
+        report = optimize_design(settings, engineering)
+        self.assertEqual(report["optimum"]["azimuth_deg"], 45)
+        self.assertEqual(report["search"]["azimuth_seeds_deg"], [45])
+
+    def test_efficiency_package_search_retains_fixed_rf(self):
+        from teo2_design import DesignSettings, crystal_geometry
+        engineering = DesignSettings(azimuth_min_deg=40, azimuth_max_deg=50,
+                                     azimuth_step_deg=10, rf_ceiling_w=0.2)
+        settings = Settings(532, acoustic_mode="slow", incident="e",
+                            rf_min_mhz=80, rf_max_mhz=80, grid_deg=10,
+                            length_mm=3, acoustic_width_mm=7, acoustic_height_mm=3)
+        report = optimize_design(settings, engineering)
+        self.assertEqual(report["inputs"]["rf_budget_w"], 0.2)
+        for rec in [report["optimum"]]+report["alternatives"]:
+            self.assertAlmostEqual(rec["rf_mhz"], 80, places=6)
+            self.assertLessEqual(rec["rf_selected_w"], 0.2)
+            self.assertTrue(crystal_geometry(dict(report, optimum=rec), engineering)["feasible"])
 
 
 if __name__ == "__main__":
